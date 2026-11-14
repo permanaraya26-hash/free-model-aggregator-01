@@ -217,14 +217,31 @@ function requirementsFor(body: Json): Requirement {
 function requirementsFromBody(body: Json): Requirement {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   let vision = false;
+  let textChars = 0;
+  const countText = (value: unknown): void => {
+    if (typeof value === 'string') textChars += value.length;
+    else if (Array.isArray(value)) value.forEach(countText);
+    else if (isRecord(value)) Object.values(value).forEach(countText);
+  };
   for (const message of messages) {
-    if (!isRecord(message) || !Array.isArray(message.content)) continue;
-    for (const block of message.content) {
-      if (isRecord(block) && (block.type === 'image' || block.type === 'image_url')) vision = true;
+    if (!isRecord(message)) continue;
+    countText(message.content);
+    if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (isRecord(block) && (block.type === 'image' || block.type === 'image_url')) vision = true;
+      }
     }
   }
+  countText(body.system);
+  countText(body.tools);
   const format = isRecord(body.response_format) ? body.response_format.type : undefined;
-  return { tools: Array.isArray(body.tools) && body.tools.length > 0, vision, json: format === 'json_object' || format === 'json_schema' };
+  const maxTokens = typeof body.max_tokens === 'number' ? body.max_tokens : 0;
+  // The providers count a token as ~4 chars, so a long prompt needs a long
+  // context. Only engage this guard for genuinely long prompts, so ordinary
+  // requests keep the full candidate list.
+  const estimatedTokens = Math.ceil(textChars / 4) + maxTokens;
+  const minContext = estimatedTokens > 32768 ? estimatedTokens : undefined;
+  return { tools: Array.isArray(body.tools) && body.tools.length > 0, vision, json: format === 'json_object' || format === 'json_schema', min_context: minContext };
 }
 
 /** One client request body, or null when it is not one JSON object or is too large. */
